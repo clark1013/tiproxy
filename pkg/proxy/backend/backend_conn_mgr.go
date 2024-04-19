@@ -60,6 +60,7 @@ const (
 	signalTypeRedirect signalType = iota
 	signalTypeGracefulClose
 	signalTypeNums
+	signalTypeSaveSession
 )
 
 type redirectResult struct {
@@ -142,6 +143,10 @@ type BackendConnManager struct {
 	}
 	connectionID uint64
 	quitSource   ErrorSource
+
+	sessionStates string
+	sessionToken  string
+	noBackend     bool
 }
 
 // NewBackendConnManager creates a BackendConnManager.
@@ -278,6 +283,54 @@ func (mgr *BackendConnManager) getBackendIO(ctx context.Context, cctx ConnContex
 	return io, err
 }
 
+type SessionToken struct {
+	Username string `json:"username"`
+}
+
+func (mgr *BackendConnManager) handleNoBackendReconnect(ctx context.Context) error {
+	st := new(SessionToken)
+	err := json.Unmarshal([]byte(mgr.sessionToken), st)
+	if err != nil {
+		mgr.logger.Error("marshal json failed", zap.Error(err))
+		return err
+	}
+	mgr.logger.Info("start to getBackendIO")
+	clientResp := pnet.HandshakeResp{User: st.Username}
+	newBackendIO, err := mgr.getBackendIO(ctx, mgr, &clientResp)
+	// newBackendIO = pnet.NewPacketIO(cn, mgr.logger, mgr.config.ConnBufferSize, pnet.WithRemoteAddr(rs.to, cn.RemoteAddr()), pnet.WithWrapError(ErrBackendConn))
+	if err != nil {
+		mgr.logger.Error("getBackendIO failed", zap.Error(err))
+		return err
+	}
+	mgr.logger.Info("start to handshakeSecondTime", zap.String("localAddr", newBackendIO.LocalAddr().String()))
+	if err = mgr.authenticator.handshakeSecondTime(mgr.logger, mgr.clientIO, newBackendIO, mgr.backendTLS, mgr.sessionToken); err == nil {
+		err = mgr.initSessionStates(newBackendIO, mgr.sessionStates)
+	} else {
+		mgr.logger.Error("handshakeSecondTime", zap.Error(err))
+		mgr.handshakeHandler.OnHandshake(mgr, newBackendIO.RemoteAddr().String(), err, Error2Source(err))
+	}
+	if err != nil {
+		if ignoredErr := newBackendIO.Close(); ignoredErr != nil && !pnet.IsDisconnectError(ignoredErr) {
+			mgr.logger.Error("close new backend connection failed", zap.Error(ignoredErr))
+		}
+		return err
+	}
+	// mgr.updateTraffic(newBackendIO)
+	// if ignoredErr := newBackendIO.Close(); ignoredErr != nil && !pnet.IsDisconnectError(ignoredErr) {
+	// 	mgr.logger.Error("close previous backend connection failed", zap.Error(ignoredErr))
+	// }
+	mgr.backendIO.Store(newBackendIO)
+	// mgr.curBackend = backend
+	// mgr.setKeepAlive()
+	// mgr.handshakeHandler.OnHandshake(mgr, mgr.ServerAddr(), nil, SrcNone)
+
+	mgr.sessionStates = ""
+	mgr.sessionToken = ""
+	mgr.noBackend = false
+
+	return nil
+}
+
 // ExecuteCmd forwards messages between the client and the backend.
 // If it finds that the session is ready for redirection, it migrates the session.
 func (mgr *BackendConnManager) ExecuteCmd(ctx context.Context, request []byte) (err error) {
@@ -304,6 +357,13 @@ func (mgr *BackendConnManager) ExecuteCmd(ctx context.Context, request []byte) (
 		mgr.lastActiveTime = now
 		mgr.processLock.Unlock()
 	}()
+	if mgr.noBackend {
+		err = mgr.handleNoBackendReconnect(ctx)
+		if err != nil {
+			mgr.logger.Error("no backend reconnect failed", zap.Error(err))
+			return
+		}
+	}
 	if len(request) < 1 {
 		err = mysql.ErrMalformPacket
 		return
@@ -324,9 +384,10 @@ func (mgr *BackendConnManager) ExecuteCmd(ctx context.Context, request []byte) (
 	}
 	if err != nil {
 		if !pnet.IsMySQLError(err) {
+			mgr.logger.Error("got a non mysql error", zap.Error(err), zap.Stringer("cmd", cmd))
 			return
 		} else {
-			mgr.logger.Debug("got a mysql error", zap.Error(err), zap.Stringer("cmd", cmd))
+			mgr.logger.Info("got a mysql error", zap.Error(err), zap.Stringer("cmd", cmd))
 		}
 	}
 	if err == nil {
@@ -435,6 +496,8 @@ func (mgr *BackendConnManager) processSignals(ctx context.Context) {
 					mgr.tryGracefulClose(ctx)
 				case signalTypeRedirect:
 					mgr.tryRedirect(ctx)
+				case signalTypeSaveSession:
+					mgr.trySaveSession(ctx)
 				}
 			}()
 		case rs := <-mgr.redirectResCh:
@@ -451,6 +514,17 @@ func (mgr *BackendConnManager) processSignals(ctx context.Context) {
 			return
 		}
 	}
+}
+
+func (mgr *BackendConnManager) trySaveSession(ctx context.Context) {
+	backendIO := mgr.backendIO.Load()
+	sessionStates, sessionToken, err := mgr.querySessionStates(backendIO)
+	if err != nil {
+		return
+	}
+	mgr.sessionStates = sessionStates
+	mgr.sessionToken = sessionToken
+	mgr.logger.Info("save session success")
 }
 
 // tryRedirect tries to migrate the session if the session is redirect-able.
@@ -564,6 +638,15 @@ func (mgr *BackendConnManager) Redirect(backendInst router.BackendInst) bool {
 	return true
 }
 
+func (mgr *BackendConnManager) SaveSession() bool {
+	if mgr.closeStatus.Load() >= statusNotifyClose {
+		return false
+	}
+
+	mgr.signalReceived <- signalTypeSaveSession
+	return true
+}
+
 func (mgr *BackendConnManager) notifyRedirectResult(ctx context.Context, rs *redirectResult) {
 	if rs == nil {
 		return
@@ -612,6 +695,9 @@ func (mgr *BackendConnManager) checkBackendActive() {
 	if mgr.closeStatus.Load() >= statusNotifyClose {
 		return
 	}
+	if mgr.noBackend {
+		return
+	}
 	now := monotime.Now()
 	if mgr.lastActiveTime.Add(mgr.config.CheckBackendInterval).After(now) {
 		return
@@ -621,11 +707,16 @@ func (mgr *BackendConnManager) checkBackendActive() {
 		mgr.logger.Info("backend connection is closed, close client connection",
 			zap.Stringer("client_addr", mgr.clientIO.RemoteAddr()), zap.Stringer("backend_addr", backendIO.RemoteAddr()),
 			zap.Bool("backend_healthy", mgr.curBackend.Healthy()))
-		mgr.quitSource = SrcBackendNetwork
-		if err := mgr.clientIO.GracefulClose(); err != nil {
-			mgr.logger.Warn("graceful close client IO error", zap.Stringer("client_addr", mgr.clientIO.RemoteAddr()), zap.Error(err))
+		if mgr.sessionToken == "" {
+			mgr.quitSource = SrcBackendNetwork
+			if err := mgr.clientIO.GracefulClose(); err != nil {
+				mgr.logger.Warn("graceful close client IO error", zap.Stringer("client_addr", mgr.clientIO.RemoteAddr()), zap.Error(err))
+			}
+			mgr.closeStatus.CompareAndSwap(statusActive, statusClosing)
+		} else {
+			mgr.logger.Info("keep client connection alive since session is saved")
+			mgr.noBackend = true
 		}
-		mgr.closeStatus.CompareAndSwap(statusActive, statusClosing)
 	} else {
 		mgr.lastActiveTime = now
 	}
