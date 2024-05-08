@@ -524,6 +524,7 @@ func (mgr *BackendConnManager) trySaveSession(ctx context.Context) {
 	}
 	mgr.sessionStates = sessionStates
 	mgr.sessionToken = sessionToken
+	mgr.noBackend = true
 	mgr.logger.Info("save session success")
 }
 
@@ -715,7 +716,6 @@ func (mgr *BackendConnManager) checkBackendActive() {
 			mgr.closeStatus.CompareAndSwap(statusActive, statusClosing)
 		} else {
 			mgr.logger.Info("keep client connection alive since session is saved")
-			mgr.noBackend = true
 		}
 	} else {
 		mgr.lastActiveTime = now
