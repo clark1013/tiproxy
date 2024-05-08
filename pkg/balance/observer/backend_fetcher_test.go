@@ -1,13 +1,12 @@
 // Copyright 2023 PingCAP, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-package router
+package observer
 
 import (
 	"context"
 	"testing"
 
-	tidbinfo "github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tiproxy/lib/util/logger"
 	"github.com/pingcap/tiproxy/pkg/manager/infosync"
 	"github.com/stretchr/testify/require"
@@ -37,7 +36,7 @@ func TestPDFetcher(t *testing.T) {
 		{
 			infos: map[string]*infosync.TiDBInfo{
 				"1.1.1.1:4000": {
-					TopologyInfo: &tidbinfo.TopologyInfo{
+					TiDBTopologyInfo: &infosync.TiDBTopologyInfo{
 						IP:         "1.1.1.1",
 						StatusPort: 10080,
 					},
@@ -51,7 +50,7 @@ func TestPDFetcher(t *testing.T) {
 			infos: map[string]*infosync.TiDBInfo{
 				"1.1.1.1:4000": {
 					TTL: "123456789",
-					TopologyInfo: &tidbinfo.TopologyInfo{
+					TiDBTopologyInfo: &infosync.TiDBTopologyInfo{
 						IP:         "1.1.1.1",
 						StatusPort: 10080,
 					},
@@ -68,14 +67,14 @@ func TestPDFetcher(t *testing.T) {
 			infos: map[string]*infosync.TiDBInfo{
 				"1.1.1.1:4000": {
 					TTL: "123456789",
-					TopologyInfo: &tidbinfo.TopologyInfo{
+					TiDBTopologyInfo: &infosync.TiDBTopologyInfo{
 						IP:         "1.1.1.1",
 						StatusPort: 10080,
 					},
 				},
 				"2.2.2.2:4000": {
 					TTL: "123456789",
-					TopologyInfo: &tidbinfo.TopologyInfo{
+					TiDBTopologyInfo: &infosync.TiDBTopologyInfo{
 						IP:         "2.2.2.2",
 						StatusPort: 10080,
 					},
@@ -115,20 +114,4 @@ func TestPDFetcher(t *testing.T) {
 		test.check(info)
 		require.NoError(t, err)
 	}
-}
-
-type mockTpFetcher struct {
-	t     *testing.T
-	infos map[string]*infosync.TiDBInfo
-	err   error
-}
-
-func newMockTpFetcher(t *testing.T) *mockTpFetcher {
-	return &mockTpFetcher{
-		t: t,
-	}
-}
-
-func (ft *mockTpFetcher) GetTiDBTopology(ctx context.Context) (map[string]*infosync.TiDBInfo, error) {
-	return ft.infos, ft.err
 }

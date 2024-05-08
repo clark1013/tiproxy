@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	tidbinfo "github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tiproxy/lib/config"
 	"github.com/pingcap/tiproxy/lib/util/errors"
 	"github.com/pingcap/tiproxy/lib/util/retry"
@@ -29,12 +28,19 @@ import (
 
 const (
 	tiproxyTopologyPath = "/topology/tiproxy"
+	promTopologyPath    = "/topology/prometheus"
+
+	// tidbTopologyInformationPath means etcd path for storing topology info.
+	tidbTopologyInformationPath = "/topology/tidb"
 
 	topologySessionTTL    = 45
 	topologyRefreshIntvl  = 30 * time.Second
 	topologyPutTimeout    = 2 * time.Second
 	topologyPutRetryIntvl = 1 * time.Second
 	topologyPutRetryCnt   = 3
+	getPromTimeout        = 2 * time.Second
+	getPromRetryIntvl     = 0
+	getPromRetryCnt       = 3
 	logInterval           = 10
 
 	ttlSuffix  = "ttl"
@@ -55,11 +61,14 @@ type InfoSyncer struct {
 }
 
 type syncConfig struct {
-	sessionTTL    int
-	refreshIntvl  time.Duration
-	putTimeout    time.Duration
-	putRetryIntvl time.Duration
-	putRetryCnt   uint64
+	sessionTTL        int
+	refreshIntvl      time.Duration
+	putTimeout        time.Duration
+	putRetryIntvl     time.Duration
+	putRetryCnt       uint64
+	getPromTimeout    time.Duration
+	getPromRetryIntvl time.Duration
+	getPromRetryCnt   uint64
 }
 
 // TopologyInfo is the info of TiProxy.
@@ -73,23 +82,44 @@ type TopologyInfo struct {
 	StartTimestamp int64  `json:"start_timestamp"`
 }
 
+// TiDBTopologyInfo is the topology info of TiDB.
+type TiDBTopologyInfo struct {
+	Version        string            `json:"version"`
+	GitHash        string            `json:"git_hash"`
+	IP             string            `json:"ip"`
+	StatusPort     uint              `json:"status_port"`
+	DeployPath     string            `json:"deploy_path"`
+	StartTimestamp int64             `json:"start_timestamp"`
+	Labels         map[string]string `json:"labels"`
+}
+
 // TiDBInfo is the info of TiDB.
 type TiDBInfo struct {
 	// TopologyInfo is parsed from the /info path.
-	*tidbinfo.TopologyInfo
+	*TiDBTopologyInfo
 	// TTL is parsed from the /ttl path.
 	TTL string
+}
+
+// PrometheusInfo is the info of prometheus.
+type PrometheusInfo struct {
+	IP         string `json:"ip"`
+	BinaryPath string `json:"binary_path"`
+	Port       int    `json:"port"`
 }
 
 func NewInfoSyncer(lg *zap.Logger) *InfoSyncer {
 	return &InfoSyncer{
 		lg: lg,
 		syncConfig: syncConfig{
-			sessionTTL:    topologySessionTTL,
-			refreshIntvl:  topologyRefreshIntvl,
-			putTimeout:    topologyPutTimeout,
-			putRetryIntvl: topologyPutRetryIntvl,
-			putRetryCnt:   topologyPutRetryCnt,
+			sessionTTL:        topologySessionTTL,
+			refreshIntvl:      topologyRefreshIntvl,
+			putTimeout:        topologyPutTimeout,
+			putRetryIntvl:     topologyPutRetryIntvl,
+			putRetryCnt:       topologyPutRetryCnt,
+			getPromTimeout:    getPromTimeout,
+			getPromRetryCnt:   getPromRetryCnt,
+			getPromRetryIntvl: getPromRetryIntvl,
 		},
 	}
 }
@@ -169,11 +199,16 @@ func (is *InfoSyncer) getTopologyInfo(cfg *config.Config) (*TopologyInfo, error)
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}
-	// reporting a non unicast IP makes no sense, try to find one
-	// loopback/linklocal-unicast are not global unicast IP, but are valid local unicast IP
-	if pip := net.ParseIP(ip); ip == "" || pip.Equal(net.IPv4bcast) || pip.IsUnspecified() || pip.IsMulticast() {
-		if v := sys.GetGlobalUnicastIP(); v != "" {
-			ip = v
+	// AdvertiseAddr may be a DNS in k8s and certificate SAN typically contains DNS but not IP.
+	if len(cfg.Proxy.AdvertiseAddr) > 0 {
+		ip = cfg.Proxy.AdvertiseAddr
+	} else {
+		// reporting a non unicast IP makes no sense, try to find one
+		// loopback/linklocal-unicast are not global unicast IP, but are valid local unicast IP
+		if pip := net.ParseIP(ip); ip == "" || pip.Equal(net.IPv4bcast) || pip.IsUnspecified() || pip.IsMulticast() {
+			if v := sys.GetGlobalUnicastIP(); v != "" {
+				ip = v
+			}
 		}
 	}
 	return &TopologyInfo{
@@ -236,7 +271,7 @@ func (is *InfoSyncer) removeTopology(ctx context.Context) error {
 
 func (is *InfoSyncer) GetTiDBTopology(ctx context.Context) (map[string]*TiDBInfo, error) {
 	// etcdCli.Get will retry infinitely internally.
-	res, err := is.etcdCli.Get(ctx, tidbinfo.TopologyInformationPath, clientv3.WithPrefix())
+	res, err := is.etcdCli.Get(ctx, tidbTopologyInformationPath, clientv3.WithPrefix())
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}
@@ -244,14 +279,14 @@ func (is *InfoSyncer) GetTiDBTopology(ctx context.Context) (map[string]*TiDBInfo
 	infos := make(map[string]*TiDBInfo, len(res.Kvs)/2)
 	for _, kv := range res.Kvs {
 		var ttl, addr string
-		var topology *tidbinfo.TopologyInfo
+		var topology *TiDBTopologyInfo
 		key := hack.String(kv.Key)
 		switch {
 		case strings.HasSuffix(key, ttlSuffix):
-			addr = key[len(tidbinfo.TopologyInformationPath)+1 : len(key)-len(ttlSuffix)-1]
+			addr = key[len(tidbTopologyInformationPath)+1 : len(key)-len(ttlSuffix)-1]
 			ttl = hack.String(kv.Value)
 		case strings.HasSuffix(key, infoSuffix):
-			addr = key[len(tidbinfo.TopologyInformationPath)+1 : len(key)-len(infoSuffix)-1]
+			addr = key[len(tidbTopologyInformationPath)+1 : len(key)-len(infoSuffix)-1]
 			if err = json.Unmarshal(kv.Value, &topology); err != nil {
 				is.lg.Error("unmarshal topology info failed", zap.String("key", key),
 					zap.String("value", hack.String(kv.Value)), zap.Error(err))
@@ -270,10 +305,32 @@ func (is *InfoSyncer) GetTiDBTopology(ctx context.Context) (map[string]*TiDBInfo
 		if len(ttl) > 0 {
 			info.TTL = hack.String(kv.Value)
 		} else {
-			info.TopologyInfo = topology
+			info.TiDBTopologyInfo = topology
 		}
 	}
 	return infos, nil
+}
+
+func (is *InfoSyncer) GetPromInfo(ctx context.Context) (*PrometheusInfo, error) {
+	var res *clientv3.GetResponse
+	err := retry.Retry(func() error {
+		childCtx, cancel := context.WithTimeout(ctx, is.syncConfig.getPromTimeout)
+		var err error
+		res, err = is.etcdCli.Get(childCtx, promTopologyPath, clientv3.WithPrefix())
+		cancel()
+		return errors.WithStack(err)
+	}, ctx, is.syncConfig.getPromRetryIntvl, is.syncConfig.getPromRetryCnt)
+	if err != nil {
+		return nil, err
+	}
+	if len(res.Kvs) == 0 {
+		return nil, nil
+	}
+	var info PrometheusInfo
+	if err = json.Unmarshal(res.Kvs[0].Value, &info); err != nil {
+		return nil, errors.WithStack(err)
+	}
+	return &info, nil
 }
 
 func (is *InfoSyncer) Close() error {

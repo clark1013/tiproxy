@@ -9,6 +9,7 @@ import (
 
 	glist "github.com/bahlo/generic-list-go"
 	"github.com/pingcap/tiproxy/lib/util/errors"
+	"github.com/pingcap/tiproxy/pkg/balance/observer"
 	"github.com/pingcap/tiproxy/pkg/util/monotime"
 )
 
@@ -52,13 +53,7 @@ const (
 
 const (
 	// The interval to rebalance connections.
-	rebalanceInterval = 10 * time.Millisecond
-	// The number of connections to rebalance during each interval.
-	// Limit the number to avoid creating too many connections suddenly on a backend.
-	rebalanceConnsPerLoop = 10
-	// The threshold of ratio of the highest score and lowest score.
-	// If the ratio exceeds the threshold, the proxy will rebalance connections.
-	rebalanceMaxScoreRatio = 1.2
+	rebalanceInterval = time.Second
 	// After a connection fails to redirect, it may contain some unmigratable status.
 	// Limit its redirection interval to avoid unnecessary retrial to reduce latency jitter.
 	redirectFailMinInterval = 3 * time.Second
@@ -85,7 +80,7 @@ type BackendInst interface {
 type backendWrapper struct {
 	mu struct {
 		sync.RWMutex
-		BackendHealth
+		observer.BackendHealth
 	}
 	addr string
 	// connScore is used for calculating backend scores and check if the backend can be removed from the list.
@@ -96,34 +91,32 @@ type backendWrapper struct {
 	connList *glist.List[*connWrapper]
 }
 
-func (b *backendWrapper) setHealth(health BackendHealth) {
+func newBackendWrapper(addr string, health observer.BackendHealth) *backendWrapper {
+	wrapper := &backendWrapper{
+		addr:     addr,
+		connList: glist.New[*connWrapper](),
+	}
+	wrapper.setHealth(health)
+	return wrapper
+}
+
+func (b *backendWrapper) setHealth(health observer.BackendHealth) {
 	b.mu.Lock()
 	b.mu.BackendHealth = health
 	b.mu.Unlock()
 }
 
-// score calculates the score of the backend. Larger score indicates higher load.
-func (b *backendWrapper) score() int {
-	b.mu.RLock()
-	score := b.mu.Status.ToScore() + b.connScore
-	b.mu.RUnlock()
-	return score
+func (b *backendWrapper) ConnScore() int {
+	return b.connScore
 }
 
 func (b *backendWrapper) Addr() string {
 	return b.addr
 }
 
-func (b *backendWrapper) Status() BackendStatus {
-	b.mu.RLock()
-	status := b.mu.Status
-	b.mu.RUnlock()
-	return status
-}
-
 func (b *backendWrapper) Healthy() bool {
 	b.mu.RLock()
-	healthy := b.mu.Status == StatusHealthy
+	healthy := b.mu.Healthy
 	b.mu.RUnlock()
 	return healthy
 }
@@ -133,6 +126,24 @@ func (b *backendWrapper) ServerVersion() string {
 	version := b.mu.ServerVersion
 	b.mu.RUnlock()
 	return version
+}
+
+func (b *backendWrapper) ConnCount() int {
+	return b.connList.Len()
+}
+
+func (b *backendWrapper) GetBackendInfo() observer.BackendInfo {
+	b.mu.RLock()
+	info := b.mu.BackendInfo
+	b.mu.RUnlock()
+	return info
+}
+
+func (b *backendWrapper) Equals(health observer.BackendHealth) bool {
+	b.mu.RLock()
+	equal := b.mu.BackendHealth.Equals(health)
+	b.mu.RUnlock()
+	return equal
 }
 
 func (b *backendWrapper) String() string {

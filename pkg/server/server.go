@@ -75,7 +75,11 @@ func NewServer(ctx context.Context, sctx *sctx.Context) (srv *Server, err error)
 	//
 	// TODO: there is a race condition that printInfo and logmgr may concurrently execute:
 	// logmgr may havenot been initialized with logfile yet
+	// Make sure the TiProxy info is always printed.
+	level := lg.Level()
+	srv.LoggerManager.SetLoggerLevel(zap.InfoLevel)
 	printInfo(lg)
+	srv.LoggerManager.SetLoggerLevel(level)
 
 	// setup metrics
 	srv.MetricsManager.Init(ctx, lg.Named("metrics"))
@@ -125,7 +129,7 @@ func NewServer(ctx context.Context, sctx *sctx.Context) (srv *Server, err error)
 			nscs = append(nscs, nsc)
 		}
 
-		err = srv.NamespaceManager.Init(lg.Named("nsmgr"), nscs, srv.InfoSyncer, srv.Http)
+		err = srv.NamespaceManager.Init(lg.Named("nsmgr"), nscs, srv.InfoSyncer, srv.InfoSyncer, srv.Http)
 		if err != nil {
 			err = errors.WithStack(err)
 			return
