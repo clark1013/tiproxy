@@ -697,6 +697,7 @@ func (mgr *BackendConnManager) checkBackendActive() {
 		return
 	}
 	if mgr.noBackend {
+		mgr.logger.Info("keep client connection alive since we are in zero backend mode")
 		return
 	}
 	now := monotime.Now()
@@ -708,15 +709,11 @@ func (mgr *BackendConnManager) checkBackendActive() {
 		mgr.logger.Info("backend connection is closed, close client connection",
 			zap.Stringer("client_addr", mgr.clientIO.RemoteAddr()), zap.Stringer("backend_addr", backendIO.RemoteAddr()),
 			zap.Bool("backend_healthy", mgr.curBackend.Healthy()))
-		if mgr.sessionToken == "" {
-			mgr.quitSource = SrcBackendNetwork
-			if err := mgr.clientIO.GracefulClose(); err != nil {
-				mgr.logger.Warn("graceful close client IO error", zap.Stringer("client_addr", mgr.clientIO.RemoteAddr()), zap.Error(err))
-			}
-			mgr.closeStatus.CompareAndSwap(statusActive, statusClosing)
-		} else {
-			mgr.logger.Info("keep client connection alive since session is saved")
+		mgr.quitSource = SrcBackendNetwork
+		if err := mgr.clientIO.GracefulClose(); err != nil {
+			mgr.logger.Warn("graceful close client IO error", zap.Stringer("client_addr", mgr.clientIO.RemoteAddr()), zap.Error(err))
 		}
+		mgr.closeStatus.CompareAndSwap(statusActive, statusClosing)
 	} else {
 		mgr.lastActiveTime = now
 	}
