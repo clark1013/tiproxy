@@ -384,10 +384,9 @@ func (mgr *BackendConnManager) ExecuteCmd(ctx context.Context, request []byte) (
 	}
 	if err != nil {
 		if !pnet.IsMySQLError(err) {
-			mgr.logger.Error("got a non mysql error", zap.Error(err), zap.Stringer("cmd", cmd))
 			return
 		} else {
-			mgr.logger.Info("got a mysql error", zap.Error(err), zap.Stringer("cmd", cmd))
+			mgr.logger.Debug("got a mysql error", zap.Error(err), zap.Stringer("cmd", cmd))
 		}
 	}
 	if err == nil {
