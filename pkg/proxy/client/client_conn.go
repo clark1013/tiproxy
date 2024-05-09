@@ -73,12 +73,6 @@ func (cc *ClientConnection) processMsg(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		// cmd := pnet.Command(clientPkt[0])
-		// if cmd == pnet.ComPing {
-		// 	cc.logger.Info("pong directly form tiproxy")
-		// 	cc.pkt.WriteOKPacket(0, pnet.OKHeader)
-		// 	continue
-		// }
 		err = cc.connMgr.ExecuteCmd(ctx, clientPkt)
 		if err != nil {
 			return err
