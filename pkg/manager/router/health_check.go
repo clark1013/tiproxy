@@ -55,11 +55,14 @@ func (dhc *DefaultHealthCheck) Check(ctx context.Context, addr string, info *Bac
 	bh := &BackendHealth{
 		Status: StatusHealthy,
 	}
+	dhc.logger.Debug("init health check", zap.Any("enable", dhc.cfg.Enable))
 	if !dhc.cfg.Enable {
 		return bh
 	}
+	dhc.logger.Debug("before health check")
 	// Skip checking the status port if it's not fetched.
 	if info != nil && len(info.IP) > 0 {
+		dhc.logger.Debug("start health check")
 		// When a backend gracefully shut down, the status port returns 500 but the SQL port still accepts
 		// new connections, so we must check the status port first.
 		schema := "http"
@@ -111,6 +114,7 @@ func (dhc *DefaultHealthCheck) Check(ctx context.Context, addr string, info *Bac
 		bh.Status = StatusCannotConnect
 		bh.PingErr = errors.Wrapf(err, "connect sql port failed")
 	}
+	dhc.logger.Debug("finish health check", zap.Any("bh", bh))
 	return bh
 }
 
