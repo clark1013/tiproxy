@@ -160,7 +160,7 @@ func NewBackendConnManager(logger *zap.Logger, handshakeHandler HandshakeHandler
 		handshakeHandler: handshakeHandler,
 		authenticator:    NewAuthenticator(config),
 		// There are 2 types of signals, which may be sent concurrently.
-		signalReceived: make(chan signalType, signalTypeNums),
+		signalReceived: make(chan signalType, signalTypeSaveSession),
 		redirectResCh:  make(chan *redirectResult, 1),
 		quitSource:     SrcNone,
 	}
