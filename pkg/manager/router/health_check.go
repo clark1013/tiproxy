@@ -6,16 +6,12 @@ package router
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/pingcap/tiproxy/lib/config"
 	"github.com/pingcap/tiproxy/lib/util/errors"
-	pnet "github.com/pingcap/tiproxy/pkg/proxy/net"
-	"github.com/pingcap/tiproxy/pkg/util/monotime"
 	"go.uber.org/zap"
 )
 
@@ -92,28 +88,28 @@ func (dhc *DefaultHealthCheck) Check(ctx context.Context, addr string, info *Bac
 	}
 
 	// Also dial the SQL port just in case that the SQL port hangs.
-	var serverVersion string
-	err := dhc.connectWithRetry(ctx, func() error {
-		startTime := monotime.Now()
-		conn, err := net.DialTimeout("tcp", addr, dhc.cfg.DialTimeout)
-		setPingBackendMetrics(addr, err == nil, startTime)
-		if err != nil {
-			return err
-		}
-		if err = conn.SetReadDeadline(time.Now().Add(dhc.cfg.DialTimeout)); err != nil {
-			return err
-		}
-		serverVersion, err = pnet.ReadServerVersion(conn)
-		if ignoredErr := conn.Close(); ignoredErr != nil && !pnet.IsDisconnectError(ignoredErr) {
-			dhc.logger.Warn("close connection in health check failed", zap.Error(ignoredErr))
-		}
-		bh.ServerVersion = serverVersion
-		return err
-	})
-	if err != nil {
-		bh.Status = StatusCannotConnect
-		bh.PingErr = errors.Wrapf(err, "connect sql port failed")
-	}
+	// var serverVersion string
+	// err := dhc.connectWithRetry(ctx, func() error {
+	// 	startTime := monotime.Now()
+	// 	conn, err := net.DialTimeout("tcp", addr, dhc.cfg.DialTimeout)
+	// 	setPingBackendMetrics(addr, err == nil, startTime)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	if err = conn.SetReadDeadline(time.Now().Add(dhc.cfg.DialTimeout)); err != nil {
+	// 		return err
+	// 	}
+	// 	serverVersion, err = pnet.ReadServerVersion(conn)
+	// 	if ignoredErr := conn.Close(); ignoredErr != nil && !pnet.IsDisconnectError(ignoredErr) {
+	// 		dhc.logger.Warn("close connection in health check failed", zap.Error(ignoredErr))
+	// 	}
+	// 	bh.ServerVersion = serverVersion
+	// 	return err
+	// })
+	// if err != nil {
+	// 	bh.Status = StatusCannotConnect
+	// 	bh.PingErr = errors.Wrapf(err, "connect sql port failed")
+	// }
 	dhc.logger.Debug("finish health check", zap.Any("bh", bh))
 	return bh
 }
