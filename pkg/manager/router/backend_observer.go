@@ -134,6 +134,7 @@ func (bo *BackendObserver) Start() {
 // Refresh indicates the observer to refresh immediately.
 func (bo *BackendObserver) Refresh() {
 	// If the observer happens to be refreshing, skip this round.
+	bo.logger.Info("start to Refresh")
 	bo.noBackend = false
 	select {
 	case bo.refreshChan <- struct{}{}:
@@ -145,6 +146,7 @@ func (bo *BackendObserver) observe(ctx context.Context) {
 	for ctx.Err() == nil {
 		startTime := monotime.Now()
 		if !bo.noBackend {
+			bo.logger.Info("observe start to get backends")
 			backendInfo, err := bo.fetcher.GetBackendList(ctx)
 			if err != nil {
 				bo.logger.Error("fetching backends encounters error", zap.Error(err))
@@ -230,5 +232,6 @@ func (bo *BackendObserver) Close() {
 }
 
 func (bo *BackendObserver) SetNoBackend() {
+	bo.logger.Info("SetNoBackend")
 	bo.noBackend = true
 }
