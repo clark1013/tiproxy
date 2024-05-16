@@ -324,6 +324,7 @@ func (router *ScoreBasedRouter) OnBackendChanged(backends map[string]*BackendHea
 					conn := ele.Value
 					conn.SaveSession()
 				}
+				router.observer.SetNoBackend()
 			}
 		}
 	}

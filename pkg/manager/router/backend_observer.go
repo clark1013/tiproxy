@@ -94,6 +94,8 @@ type BackendObserver struct {
 	wg             waitgroup.WaitGroup
 	cancelFunc     context.CancelFunc
 	refreshChan    chan struct{}
+
+	noBackend bool
 }
 
 // StartBackendObserver creates a BackendObserver and starts watching.
@@ -132,6 +134,7 @@ func (bo *BackendObserver) Start() {
 // Refresh indicates the observer to refresh immediately.
 func (bo *BackendObserver) Refresh() {
 	// If the observer happens to be refreshing, skip this round.
+	bo.noBackend = false
 	select {
 	case bo.refreshChan <- struct{}{}:
 	default:
@@ -141,16 +144,18 @@ func (bo *BackendObserver) Refresh() {
 func (bo *BackendObserver) observe(ctx context.Context) {
 	for ctx.Err() == nil {
 		startTime := monotime.Now()
-		backendInfo, err := bo.fetcher.GetBackendList(ctx)
-		if err != nil {
-			bo.logger.Error("fetching backends encounters error", zap.Error(err))
-			bo.eventReceiver.OnBackendChanged(nil, err)
-		} else {
-			bhMap := bo.checkHealth(ctx, backendInfo)
-			if ctx.Err() != nil {
-				return
+		if !bo.noBackend {
+			backendInfo, err := bo.fetcher.GetBackendList(ctx)
+			if err != nil {
+				bo.logger.Error("fetching backends encounters error", zap.Error(err))
+				bo.eventReceiver.OnBackendChanged(nil, err)
+			} else {
+				bhMap := bo.checkHealth(ctx, backendInfo)
+				if ctx.Err() != nil {
+					return
+				}
+				bo.notifyIfChanged(bhMap)
 			}
-			bo.notifyIfChanged(bhMap)
 		}
 
 		cost := monotime.Since(startTime)
@@ -222,4 +227,8 @@ func (bo *BackendObserver) Close() {
 		bo.cancelFunc()
 	}
 	bo.wg.Wait()
+}
+
+func (bo *BackendObserver) SetNoBackend() {
+	bo.noBackend = true
 }
