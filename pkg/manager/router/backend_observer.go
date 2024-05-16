@@ -134,8 +134,6 @@ func (bo *BackendObserver) Start() {
 // Refresh indicates the observer to refresh immediately.
 func (bo *BackendObserver) Refresh() {
 	// If the observer happens to be refreshing, skip this round.
-	bo.logger.Info("start to Refresh")
-	bo.noBackend = false
 	select {
 	case bo.refreshChan <- struct{}{}:
 	default:
