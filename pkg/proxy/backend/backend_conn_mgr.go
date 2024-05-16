@@ -240,6 +240,8 @@ func (mgr *BackendConnManager) getBackendIO(ctx context.Context, cctx ConnContex
 				return nil, ErrProxyNoBackend
 			} else if err != nil {
 				return nil, backoff.Permanent(errors.Wrap(ErrProxyErr, err))
+			} else if !backend.Healthy() {
+				return nil, ErrProxyNoBackend
 			}
 
 			var cn net.Conn
