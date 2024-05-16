@@ -696,7 +696,7 @@ func (mgr *BackendConnManager) checkBackendActive() {
 		return
 	}
 	if mgr.noBackend {
-		mgr.logger.Info("keep client connection alive since we are in zero backend mode")
+		mgr.logger.Info("keep client connection alive since we are in zero backend mode 123")
 		return
 	}
 	now := monotime.Now()
