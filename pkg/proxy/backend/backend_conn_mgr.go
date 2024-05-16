@@ -518,6 +518,7 @@ func (mgr *BackendConnManager) processSignals(ctx context.Context) {
 
 func (mgr *BackendConnManager) trySaveSession(ctx context.Context) {
 	backendIO := mgr.backendIO.Load()
+	mgr.logger.Info("before query session")
 	sessionStates, sessionToken, err := mgr.querySessionStates(backendIO)
 	if err != nil {
 		return
@@ -697,7 +698,7 @@ func (mgr *BackendConnManager) checkBackendActive() {
 		return
 	}
 	if mgr.noBackend {
-		mgr.logger.Info("keep client connection alive since we are in zero backend mode 123")
+		mgr.logger.Info("keep client connection alive since we are in zero backend mode")
 		return
 	}
 	now := monotime.Now()

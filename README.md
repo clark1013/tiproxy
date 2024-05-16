@@ -122,4 +122,3 @@ This project is for everyone. We ask that our users and contributors take a few 
 ## License
 
 TiProxy is under the Apache 2.0 license. See the [LICENSE](./LICENSE) file for details.
-
