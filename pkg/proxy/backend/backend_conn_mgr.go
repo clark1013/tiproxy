@@ -362,6 +362,7 @@ func (mgr *BackendConnManager) ExecuteCmd(ctx context.Context, request []byte) (
 		return
 	}
 	if mgr.noBackend {
+		mgr.logger.Info("reconnect triggered by sql", zap.String("sql", hack.String(request[1:])))
 		err = mgr.handleNoBackendReconnect(ctx)
 		if err != nil {
 			mgr.logger.Error("no backend reconnect failed", zap.Error(err))
