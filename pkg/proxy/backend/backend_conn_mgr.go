@@ -528,6 +528,7 @@ func (mgr *BackendConnManager) trySaveSession(ctx context.Context) {
 	mgr.sessionStates = sessionStates
 	mgr.sessionToken = sessionToken
 	mgr.noBackend = true
+	mgr.backendIO.Store(nil)
 	mgr.logger.Info("save session success")
 }
 
