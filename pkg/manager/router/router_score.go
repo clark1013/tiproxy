@@ -33,14 +33,17 @@ type ScoreBasedRouter struct {
 	backends     *glist.List[*backendWrapper]
 	observeError error
 	// Only store the version of a random backend, so the client may see a wrong version when backends are upgrading.
-	serverVersion string
+	serverVersion     string
+	enableZeroBackend bool
+	inZeroBackendMode bool
 }
 
 // NewScoreBasedRouter creates a ScoreBasedRouter.
-func NewScoreBasedRouter(logger *zap.Logger) *ScoreBasedRouter {
+func NewScoreBasedRouter(logger *zap.Logger, enableZeroBackend bool) *ScoreBasedRouter {
 	return &ScoreBasedRouter{
-		logger:   logger,
-		backends: glist.New[*backendWrapper](),
+		logger:            logger,
+		backends:          glist.New[*backendWrapper](),
+		enableZeroBackend: enableZeroBackend,
 	}
 }
 
@@ -295,6 +298,7 @@ func (router *ScoreBasedRouter) OnBackendChanged(backends map[string]*BackendHea
 	router.Lock()
 	defer router.Unlock()
 	router.observeError = err
+	router.inZeroBackendMode = false
 	for addr, health := range backends {
 		be := router.lookupBackend(addr, true)
 		if be == nil && health.Status != StatusCannotConnect {
@@ -313,6 +317,16 @@ func (router *ScoreBasedRouter) OnBackendChanged(backends map[string]*BackendHea
 				zap.String("prev", backend.mu.String()), zap.String("cur", health.String()))
 			backend.setHealth(*health)
 			router.adjustBackendList(be, true)
+			if health.Status == StatusCannotConnect && router.backends.Len() == 1 && router.enableZeroBackend {
+				be := router.backends.Front()
+				backend := be.Value
+				router.logger.Info("last backend become unhealthy, notify connections to save session")
+				for ele := backend.connList.Front(); ele != nil; ele = ele.Next() {
+					conn := ele.Value
+					conn.SaveSession()
+				}
+				router.inZeroBackendMode = true
+			}
 		}
 	}
 	if len(backends) > 0 {
@@ -430,6 +444,10 @@ func (router *ScoreBasedRouter) ServerVersion() string {
 	version := router.serverVersion
 	router.Unlock()
 	return version
+}
+
+func (router *ScoreBasedRouter) InZeroBackendMode() bool {
+	return router.inZeroBackendMode
 }
 
 // Close implements Router.Close interface.
