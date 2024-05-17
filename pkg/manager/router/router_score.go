@@ -313,6 +313,15 @@ func (router *ScoreBasedRouter) OnBackendChanged(backends map[string]*BackendHea
 				zap.String("prev", backend.mu.String()), zap.String("cur", health.String()))
 			backend.setHealth(*health)
 			router.adjustBackendList(be, true)
+			if health.Status == StatusCannotConnect && router.backends.Len() == 1 {
+				be := router.backends.Front()
+				backend := be.Value
+				router.logger.Info("last backend become unhealthy, notify connections to save session")
+				for ele := backend.connList.Front(); ele != nil; ele = ele.Next() {
+					conn := ele.Value
+					conn.SaveSession()
+				}
+			}
 		}
 	}
 	if len(backends) > 0 {

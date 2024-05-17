@@ -72,6 +72,7 @@ type RedirectableConn interface {
 	// Redirect returns false if the current conn is not redirectable.
 	Redirect(backend BackendInst) bool
 	ConnectionID() uint64
+	SaveSession() bool
 }
 
 // BackendInst defines a backend that a connection is redirecting to.
