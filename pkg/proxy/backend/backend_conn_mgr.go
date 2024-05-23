@@ -332,6 +332,7 @@ func (mgr *BackendConnManager) handleNoBackendReconnect(ctx context.Context) err
 		mgr.logger.Error("handshakeSecondTime", zap.Error(err))
 		mgr.handshakeHandler.OnHandshake(mgr, newBackendIO.RemoteAddr().String(), err, Error2Source(err))
 	}
+	mgr.logger.Info("finish to handshakeSecondTime", zap.String("localAddr", newBackendIO.LocalAddr().String()))
 	if err != nil {
 		if ignoredErr := newBackendIO.Close(); ignoredErr != nil && !pnet.IsDisconnectError(ignoredErr) {
 			mgr.logger.Error("close new backend connection failed", zap.Error(ignoredErr))
