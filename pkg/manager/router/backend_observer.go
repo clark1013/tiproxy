@@ -154,8 +154,8 @@ func (bo *BackendObserver) observe(ctx context.Context) {
 			bhMap := bo.checkHealth(ctx, backendInfo)
 			if ctx.Err() != nil {
 				return
-				bo.notifyIfChanged(bhMap)
 			}
+			bo.notifyIfChanged(bhMap)
 		}
 
 		cost := monotime.Since(startTime)

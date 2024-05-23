@@ -310,10 +310,6 @@ func (mgr *BackendConnManager) getBackendIO(ctx context.Context, cctx ConnContex
 	return io, err
 }
 
-type SessionToken struct {
-	Username string `json:"username"`
-}
-
 func (mgr *BackendConnManager) handleNoBackendReconnect(ctx context.Context) error {
 	st := new(SessionToken)
 	err := json.Unmarshal([]byte(mgr.sessionToken), st)
@@ -903,28 +899,28 @@ func (mgr *BackendConnManager) ConnInfo() []zap.Field {
 	return fields
 }
 
-func (mgr *BackendConnManager) SaveSession() bool {
-	if mgr.closeStatus.Load() >= statusNotifyClose {
-		return false
-	}
-
-	mgr.signalReceived <- signalTypeSaveSession
-	return true
-}
-
-func (mgr *BackendConnManager) trySaveSession(ctx context.Context) {
-	backendIO := mgr.backendIO.Load()
-	sessionStates, sessionToken, err := mgr.querySessionStates(backendIO)
-	if err != nil {
-		mgr.logger.Error("query session failed when save session", zap.Error(err))
-		return
-	}
-	mgr.sessionState.Store(&SessionState{
-		sessionStates: sessionStates,
-		sessionToken:  sessionToken,
-	})
-	mgr.backendIO.Store(nil)
-}
+// func (mgr *BackendConnManager) SaveSession() bool {
+// 	if mgr.closeStatus.Load() >= statusNotifyClose {
+// 		return false
+// 	}
+//
+// 	mgr.signalReceived <- signalTypeSaveSession
+// 	return true
+// }
+//
+// func (mgr *BackendConnManager) trySaveSession(ctx context.Context) {
+// 	backendIO := mgr.backendIO.Load()
+// 	sessionStates, sessionToken, err := mgr.querySessionStates(backendIO)
+// 	if err != nil {
+// 		mgr.logger.Error("query session failed when save session", zap.Error(err))
+// 		return
+// 	}
+// 	mgr.sessionState.Store(&SessionState{
+// 		sessionStates: sessionStates,
+// 		sessionToken:  sessionToken,
+// 	})
+// 	mgr.backendIO.Store(nil)
+// }
 
 // reconnect to a new backend when in zero backend mode, then restore the saved session to the backend.
 func (mgr *BackendConnManager) reconnect(ctx context.Context) error {

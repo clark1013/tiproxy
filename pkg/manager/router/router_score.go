@@ -105,8 +105,8 @@ func (router *ScoreBasedRouter) routeOnce(excluded []BackendInst) (BackendInst, 
 	// No available backends, maybe the health check result is outdated during rolling restart.
 	// Refresh the backends asynchronously in this case.
 	if router.observer != nil {
-		router.logger.Info("set nobackend to false")
-		router.observer.noBackend = false
+		// router.logger.Info("set nobackend to false")
+		// router.observer.noBackend = false
 		router.observer.Refresh()
 	}
 	return nil, ErrNoBackend
