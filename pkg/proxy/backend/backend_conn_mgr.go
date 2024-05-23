@@ -154,6 +154,10 @@ type BackendConnManager struct {
 	}
 	connectionID uint64
 	quitSource   ErrorSource
+
+	sessionStates string
+	sessionToken  string
+	noBackend     bool
 }
 
 // NewBackendConnManager creates a BackendConnManager.
@@ -261,6 +265,8 @@ func (mgr *BackendConnManager) getBackendIO(ctx context.Context, cctx ConnContex
 				return nil, ErrProxyNoBackend
 			} else if err != nil {
 				return nil, backoff.Permanent(errors.Wrap(ErrProxyErr, err))
+			} else if !backend.Healthy() {
+				return nil, ErrProxyNoBackend
 			}
 
 			var cn net.Conn
@@ -304,6 +310,54 @@ func (mgr *BackendConnManager) getBackendIO(ctx context.Context, cctx ConnContex
 	return io, err
 }
 
+type SessionToken struct {
+	Username string `json:"username"`
+}
+
+func (mgr *BackendConnManager) handleNoBackendReconnect(ctx context.Context) error {
+	st := new(SessionToken)
+	err := json.Unmarshal([]byte(mgr.sessionToken), st)
+	if err != nil {
+		mgr.logger.Error("marshal json failed", zap.Error(err))
+		return err
+	}
+	mgr.logger.Info("start to getBackendIO")
+	clientResp := pnet.HandshakeResp{User: st.Username}
+	newBackendIO, err := mgr.getBackendIO(ctx, mgr, &clientResp)
+	// newBackendIO = pnet.NewPacketIO(cn, mgr.logger, mgr.config.ConnBufferSize, pnet.WithRemoteAddr(rs.to, cn.RemoteAddr()), pnet.WithWrapError(ErrBackendConn))
+	if err != nil {
+		mgr.logger.Error("getBackendIO failed", zap.Error(err))
+		return err
+	}
+	mgr.logger.Info("start to handshakeSecondTime", zap.String("localAddr", newBackendIO.LocalAddr().String()))
+	if err = mgr.authenticator.handshakeSecondTime(mgr.logger, mgr.clientIO, newBackendIO, mgr.backendTLS, mgr.sessionToken); err == nil {
+		err = mgr.initSessionStates(newBackendIO, mgr.sessionStates)
+	} else {
+		mgr.logger.Error("handshakeSecondTime", zap.Error(err))
+		mgr.handshakeHandler.OnHandshake(mgr, newBackendIO.RemoteAddr().String(), err, Error2Source(err))
+	}
+	if err != nil {
+		if ignoredErr := newBackendIO.Close(); ignoredErr != nil && !pnet.IsDisconnectError(ignoredErr) {
+			mgr.logger.Error("close new backend connection failed", zap.Error(ignoredErr))
+		}
+		return err
+	}
+	// mgr.updateTraffic(newBackendIO)
+	// if ignoredErr := newBackendIO.Close(); ignoredErr != nil && !pnet.IsDisconnectError(ignoredErr) {
+	// 	mgr.logger.Error("close previous backend connection failed", zap.Error(ignoredErr))
+	// }
+	mgr.backendIO.Store(newBackendIO)
+	// mgr.curBackend = backend
+	// mgr.setKeepAlive()
+	// mgr.handshakeHandler.OnHandshake(mgr, mgr.ServerAddr(), nil, SrcNone)
+
+	mgr.sessionStates = ""
+	mgr.sessionToken = ""
+	mgr.noBackend = false
+
+	return nil
+}
+
 // ExecuteCmd forwards messages between the client and the backend.
 // If it finds that the session is ready for redirection, it migrates the session.
 func (mgr *BackendConnManager) ExecuteCmd(ctx context.Context, request []byte) (err error) {
@@ -333,6 +387,14 @@ func (mgr *BackendConnManager) ExecuteCmd(ctx context.Context, request []byte) (
 	if len(request) < 1 {
 		err = mysql.ErrMalformPacket
 		return
+	}
+	if mgr.noBackend {
+		mgr.logger.Info("reconnect triggered by sql", zap.String("sql", hack.String(request[1:])))
+		err = mgr.handleNoBackendReconnect(ctx)
+		if err != nil {
+			mgr.logger.Error("no backend reconnect failed", zap.Error(err))
+			return
+		}
 	}
 	cmd := pnet.Command(request[0])
 
@@ -488,6 +550,20 @@ func (mgr *BackendConnManager) processSignals(ctx context.Context) {
 	}
 }
 
+func (mgr *BackendConnManager) trySaveSession(ctx context.Context) {
+	backendIO := mgr.backendIO.Load()
+	mgr.logger.Info("before query session")
+	sessionStates, sessionToken, err := mgr.querySessionStates(backendIO)
+	if err != nil {
+		return
+	}
+	mgr.sessionStates = sessionStates
+	mgr.sessionToken = sessionToken
+	mgr.noBackend = true
+	mgr.backendIO.Store(nil)
+	mgr.logger.Info("save session success")
+}
+
 // tryRedirect tries to migrate the session if the session is redirect-able.
 // NOTE: processLock should be held before calling this function.
 func (mgr *BackendConnManager) tryRedirect(ctx context.Context) {
@@ -599,6 +675,15 @@ func (mgr *BackendConnManager) Redirect(backendInst router.BackendInst) bool {
 	return true
 }
 
+func (mgr *BackendConnManager) SaveSession() bool {
+	if mgr.closeStatus.Load() >= statusNotifyClose {
+		return false
+	}
+
+	mgr.signalReceived <- signalTypeSaveSession
+	return true
+}
+
 func (mgr *BackendConnManager) notifyRedirectResult(ctx context.Context, rs *redirectResult) {
 	if rs == nil {
 		return
@@ -645,6 +730,10 @@ func (mgr *BackendConnManager) checkBackendActive() {
 	defer mgr.processLock.Unlock()
 
 	if mgr.closeStatus.Load() >= statusNotifyClose {
+		return
+	}
+	if mgr.noBackend {
+		mgr.logger.Info("keep client connection alive since we are in zero backend mode")
 		return
 	}
 	now := monotime.Now()

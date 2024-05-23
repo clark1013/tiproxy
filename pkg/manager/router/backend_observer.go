@@ -94,6 +94,8 @@ type BackendObserver struct {
 	wg             waitgroup.WaitGroup
 	cancelFunc     context.CancelFunc
 	refreshChan    chan struct{}
+
+	noBackend bool
 }
 
 // StartBackendObserver creates a BackendObserver and starts watching.
@@ -142,6 +144,7 @@ func (bo *BackendObserver) observe(ctx context.Context) {
 	refresh := false
 	for ctx.Err() == nil {
 		startTime := monotime.Now()
+		bo.logger.Info("observe start to get backends")
 		backendInfo, err := bo.fetcher.GetBackendList(ctx, refresh)
 		refresh = false
 		if err != nil {
@@ -151,8 +154,8 @@ func (bo *BackendObserver) observe(ctx context.Context) {
 			bhMap := bo.checkHealth(ctx, backendInfo)
 			if ctx.Err() != nil {
 				return
+				bo.notifyIfChanged(bhMap)
 			}
-			bo.notifyIfChanged(bhMap)
 		}
 
 		cost := monotime.Since(startTime)
@@ -225,4 +228,9 @@ func (bo *BackendObserver) Close() {
 		bo.cancelFunc()
 	}
 	bo.wg.Wait()
+}
+
+func (bo *BackendObserver) SetNoBackend() {
+	bo.logger.Info("SetNoBackend")
+	bo.noBackend = true
 }
