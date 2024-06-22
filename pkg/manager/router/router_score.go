@@ -415,7 +415,7 @@ func (router *ScoreBasedRouter) OnBackendChanged(backends map[string]*BackendHea
 					case phasePauseNotify:
 						continue
 					case phaseRedirectNotify:
-						router.logger.Info("connection is redirecting, maybe a new backend is alive. skip pause")
+						router.logger.Info("connection is redirecting, maybe a new backend is alive. skip pause", zap.Uint64("connId", conn.ConnectionID()))
 						backend.connScore++
 						continue
 					}
@@ -484,7 +484,7 @@ func (router *ScoreBasedRouter) rebalance(maxNum int) {
 			break
 		}
 		conn := ce.Value
-		router.logger.Debug("begin redirect connection", zap.Uint64("connID", conn.ConnectionID()),
+		router.logger.Info("begin redirect connection", zap.Uint64("connID", conn.ConnectionID()),
 			zap.String("from", busiestBackend.addr), zap.String("to", idlestBackend.addr),
 			zap.Int("from_score", busiestBackend.score()), zap.Int("to_score", idlestBackend.score()))
 		busiestBackend.connScore--

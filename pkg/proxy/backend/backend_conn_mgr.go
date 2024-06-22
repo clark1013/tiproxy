@@ -862,9 +862,10 @@ func (mgr *BackendConnManager) tryPause(ctx context.Context) {
 		sessionStates: sessionStates,
 		sessionToken:  sessionToken,
 	})
+	addr := mgr.ServerAddr()
 	mgr.backendIO.Store(nil)
 	mgr.lastPauseTime = monotime.Now()
-	mgr.notifyPauseResult(mgr.ServerAddr(), nil)
+	mgr.notifyPauseResult(addr, nil)
 }
 
 // notify pause result to eventReceiver.
