@@ -22,7 +22,7 @@ const (
 	ConnContextKeyConnID        ConnContextKey = "conn-id"
 	ConnContextKeyConnAddr      ConnContextKey = "conn-addr"
 	ConnContextKeyAuthSalt      ConnContextKey = "auth-salt"
-	ConnContextKeyClientError   ConnContextKey = "client-error"
+	ConnContextClientError      ConnContextKey = "client-error"
 	ConnContextKeyProxyProtocol ConnContextKey = "proxy-protocol"
 )
 
