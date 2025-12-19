@@ -8,8 +8,10 @@ import (
 	"net"
 	"sync/atomic"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tiproxy/lib/util/errors"
 	"github.com/pingcap/tiproxy/pkg/proxy/proxyprotocol"
+	"go.uber.org/zap"
 )
 
 func (p *PacketIO) EnableProxyClient(proxy *proxyprotocol.Proxy) {
@@ -77,6 +79,7 @@ func (prw *proxyReadWriter) readProxy() error {
 				prw.proxy = proxyHeader
 			}
 		}
+		log.Info("read proxy protocol success", zap.Any("proxy", prw.proxy))
 		prw.proxyInited.Store(true)
 	}
 	return nil
