@@ -6,6 +6,9 @@ package proxyprotocol
 import (
 	"fmt"
 	"net"
+	"regexp"
+
+	"github.com/pingcap/tiproxy/lib/util/errors"
 )
 
 type ProxyVersion int
@@ -73,15 +76,72 @@ func (p *Proxy) String() string {
 		if i > 0 {
 			tlvs += ", "
 		}
-		content := fmt.Sprintf("%x", tlv.Content)
-		if len(content) > 32 {
-			content = content[:32] + "..."
-		}
+		content := fmt.Sprintf("%s", tlv.Content)
 		tlvs += fmt.Sprintf("{Type: %d, Content: %s}", tlv.Typ, content)
 	}
 	tlvs += "]"
-	return fmt.Sprintf("Proxy{Version: %d, Command: %d, Src: %v, Dst: %v, TLV: %s}",
-		p.Version, p.Command, p.SrcAddress, p.DstAddress, tlvs)
+	awsVpcID := FindAWSVPCEndpointID(p.TLV)
+	alibabaVpcID := FindAlibabaVPCID(p.TLV)
+	alibabaVpcEndpointID := FindAlibabaVPCEndpointID(p.TLV)
+	return fmt.Sprintf("Proxy{Version: %d, Command: %d, Src: %v, Dst: %v, TLV: %s}, AWS_VPC_ID: %s, Alibaba_VPC_ID: %s, Alibaba_VPC_Endpoint_ID: %s",
+		p.Version, p.Command, p.SrcAddress, p.DstAddress, tlvs, awsVpcID, alibabaVpcID, alibabaVpcEndpointID)
+}
+
+const (
+	// Amazon's extension
+	PP2_TYPE_AWS            = 0xEA
+	PP2_SUBTYPE_AWS_VPCE_ID = 0x01
+)
+
+var vpceRe = regexp.MustCompile("^[A-Za-z0-9-]*$")
+
+func IsAWSVPCEndpointID(tlv ProxyTlv) bool {
+	return tlv.Typ == PP2_TYPE_AWS && len(tlv.Content) > 0 && tlv.Content[0] == PP2_SUBTYPE_AWS_VPCE_ID
+}
+
+func AWSVPCEndpointID(tlv ProxyTlv) (string, error) {
+	if !IsAWSVPCEndpointID(tlv) {
+		return "", errors.New("not an AWS VPC endpoint ID TLV")
+	}
+	vpce := string(tlv.Content[1:])
+	if !vpceRe.MatchString(vpce) {
+		return "", errors.New("malformed AWS VPC endpoint ID TLV")
+	}
+	return vpce, nil
+}
+
+// FindAWSVPCEndpointID returns the first AWS VPC ID in the TLV if it exists and is well-formed.
+func FindAWSVPCEndpointID(tlvs []ProxyTlv) string {
+	for _, tlv := range tlvs {
+		if vpc, err := AWSVPCEndpointID(tlv); err == nil && vpc != "" {
+			return vpc
+		}
+	}
+	return ""
+}
+
+const (
+	PP2_TYPE_ALIBABA            = 0xE1
+	PP2_TLV_VPC_ID_LEN          = 26 - 1
+	PP2_TLV_VPC_ENDPOINt_ID_LEN = 24 - 1
+)
+
+func FindAlibabaVPCID(tlvs []ProxyTlv) string {
+	for _, tlv := range tlvs {
+		if tlv.Typ == PP2_TYPE_ALIBABA && len(string(tlv.Content)) == PP2_TLV_VPC_ID_LEN {
+			return string(tlv.Content)
+		}
+	}
+	return ""
+}
+
+func FindAlibabaVPCEndpointID(tlvs []ProxyTlv) string {
+	for _, tlv := range tlvs {
+		if tlv.Typ == PP2_TYPE_ALIBABA && len(string(tlv.Content)) == PP2_TLV_VPC_ENDPOINt_ID_LEN {
+			return string(tlv.Content)
+		}
+	}
+	return ""
 }
 
 type AddressWrapper interface {
