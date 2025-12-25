@@ -144,6 +144,9 @@ func (auth *Authenticator) handshakeFirstTime(ctx context.Context, logger *zap.L
 	if isSSL {
 		cctx.SetValue(ConnContextKeyTLSState, clientIO.TLSConnectionState())
 	}
+	if auth.proxyProtocol {
+		cctx.SetValue(ConnContextKeyProxyProtocol, clientIO.Proxy())
+	}
 	clientResp, err := pnet.ParseHandshakeResponse(pkt)
 	var warning *errors.Warning
 	if errors.As(err, &warning) {
@@ -174,7 +177,6 @@ RECONNECT:
 	if err := auth.writeProxyProtocol(clientIO, backendIO); err != nil {
 		return err
 	}
-	cctx.SetValue(ConnContextKeyProxyProtocol, clientIO.Proxy())
 
 	// read backend initial handshake
 	serverPkt, backendCapability, err := auth.readInitialHandshake(backendIO)
